@@ -60,8 +60,9 @@ class IsometricGame {
             enabled: false,
             showTileInfo: false,
             showGrid: false,
-            showNextTarget: false,
-            showMobTiles: false
+            showNextTarget: true,    // Default to on
+            showMobTiles: true,      // Default to on
+            showPlayerTile: false     // New setting, default to on
         };
         
         this.init();
@@ -388,9 +389,31 @@ class IsometricGame {
                 }
             }
         }
+
+        // Show player tile highlight
+        if (this.debug.showPlayerTile) {
+            const playerX = Math.floor(this.player.x);
+            const playerY = Math.floor(this.player.y);
+            
+            if (x === playerX && y === playerY) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(iso.x, iso.y - this.tileHeight/2);
+                this.ctx.lineTo(iso.x + this.tileWidth/2, iso.y);
+                this.ctx.lineTo(iso.x, iso.y + this.tileHeight/2);
+                this.ctx.lineTo(iso.x - this.tileWidth/2, iso.y);
+                this.ctx.closePath();
+                this.ctx.strokeStyle = '#ff0000';  // Red outline for player tile
+                this.ctx.setLineDash([3, 3]);     // Dashed line for distinction
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+                this.ctx.setLineDash([]);
+                this.ctx.lineWidth = 1;
+            }
+        }
     }
     
     drawEntities() {
+        // Draw all entities first
         for (let entity of this.gameAPI.entities.values()) {
             const iso = this.toIsometric(entity.x, entity.y);
             const tileType = this.gameAPI.getTile(entity.x, entity.y);
@@ -439,6 +462,48 @@ class IsometricGame {
             } else if (entity.type === this.gameAPI.entityTypes.WOLF) {
                 // Draw wolf as a pointed triangle
                 this.ctx.save();
+                
+                // Draw pack connection lines first (before any wolf shapes)
+                if (entity.packLeader) {
+                    const leaderPos = this.toIsometric(entity.packLeader.x, entity.packLeader.y);
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(screenX, screenY - this.tileHeight/2);
+                    this.ctx.lineTo(leaderPos.x, leaderPos.y - this.tileHeight/2);
+                    this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';  // Black with 60% opacity
+                    this.ctx.setLineDash([5, 5]);
+                    this.ctx.lineWidth = 1.5;  // Slightly thicker line
+                    this.ctx.stroke();
+                    this.ctx.setLineDash([]);
+                    this.ctx.lineWidth = 1;  // Reset line width
+                } else if (entity.wantsPack) {
+                    // Draw lines to nearby pack leaders that this wolf might join
+                    for (let other of this.gameAPI.entities.values()) {
+                        if (other.type === this.gameAPI.entityTypes.WOLF && 
+                            other.isPackLeader && 
+                            other.packMembers.length < this.gameAPI.entitySettings.maxPackSize) {
+                            
+                            const dx = other.x - entity.x;
+                            const dy = other.y - entity.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            
+                            // Only show connection possibility if within joining range
+                            if (distance < 10) {
+                                const otherPos = this.toIsometric(other.x, other.y);
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(screenX, screenY - this.tileHeight/2);
+                                this.ctx.lineTo(otherPos.x, otherPos.y - this.tileHeight/2);
+                                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';  // Subtle white line
+                                this.ctx.setLineDash([2, 4]);  // Shorter, more frequent dashes
+                                this.ctx.lineWidth = 0.5;
+                                this.ctx.stroke();
+                                this.ctx.setLineDash([]);
+                                this.ctx.lineWidth = 1;
+                            }
+                        }
+                    }
+                }
+                
+                // Now draw the wolf shape
                 this.ctx.translate(screenX, screenY);
                 this.ctx.rotate(entity.moveDirection);
                 
@@ -448,6 +513,21 @@ class IsometricGame {
                 this.ctx.lineTo(-4, -4);
                 this.ctx.lineTo(-4, 4);
                 this.ctx.closePath();
+                this.ctx.fillStyle = entity.isHunting ? '#884444' : '#666666';
+                this.ctx.strokeStyle = '#000000';
+                this.ctx.lineWidth = 1;
+                this.ctx.fill();
+                this.ctx.stroke();
+                
+                // Draw yellow dot for pack leader (after wolf shape)
+                if (entity.isPackLeader) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, 2, 0, Math.PI * 2);
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.strokeStyle = '#000000';  // Add black outline
+                    this.ctx.fill();
+                    this.ctx.stroke();
+                }
                 
                 // Draw hunger bar above wolf
                 if (entity.hunger !== null) {
@@ -465,7 +545,7 @@ class IsometricGame {
                     this.ctx.strokeStyle = '#000000';
                     this.ctx.strokeRect(-5, -8, 10, 2);
                 }
-                
+
                 this.ctx.restore();
             }
             
@@ -493,8 +573,8 @@ class IsometricGame {
         if (this.debug.showNextTarget) {
             for (let entity of this.gameAPI.entities.values()) {
                 if (entity.type === this.gameAPI.entityTypes.WOLF) {
-                    // Find potential target even if wolf isn't currently hunting
-                    const potentialTarget = this.gameAPI.findClosestPrey(entity);
+                    // Find potential target with unlimited range
+                    const potentialTarget = this.gameAPI.findClosestPrey(entity, Infinity);
                     if (potentialTarget) {
                         const wolfPos = this.toIsometric(entity.x, entity.y);
                         const targetPos = this.toIsometric(potentialTarget.x, potentialTarget.y);
@@ -533,6 +613,65 @@ class IsometricGame {
                 }
             }
         }
+
+        // Draw pack alert lines after entities
+        for (let entity of this.gameAPI.entities.values()) {
+            if (entity.type === this.gameAPI.entityTypes.WOLF) {
+                // Draw line from pack member to spotted prey
+                if (entity.spottedPrey && entity.packLeader) {
+                    const wolfPos = this.toIsometric(entity.x, entity.y);
+                    const preyPos = this.toIsometric(entity.spottedPrey.x, entity.spottedPrey.y);
+                    const leaderPos = this.toIsometric(entity.packLeader.x, entity.packLeader.y);
+                    
+                    // Calculate distances to compare
+                    const distToSpottedPrey = Math.sqrt(
+                        Math.pow(entity.spottedPrey.x - entity.packLeader.x, 2) +
+                        Math.pow(entity.spottedPrey.y - entity.packLeader.y, 2)
+                    );
+                    
+                    const distToCurrentTarget = entity.packLeader.huntTarget ? Math.sqrt(
+                        Math.pow(entity.packLeader.huntTarget.x - entity.packLeader.x, 2) +
+                        Math.pow(entity.packLeader.huntTarget.y - entity.packLeader.y, 2)
+                    ) : Infinity;
+                    
+                    // Only show alert if this prey is closer than current target
+                    if (!entity.packLeader.huntTarget || distToSpottedPrey < distToCurrentTarget) {
+                        this.ctx.beginPath();
+                        // Line from wolf to prey
+                        this.ctx.moveTo(wolfPos.x, wolfPos.y - this.tileHeight/2);
+                        this.ctx.lineTo(preyPos.x, preyPos.y - this.tileHeight/2);
+                        // Line from prey to leader
+                        this.ctx.lineTo(leaderPos.x, leaderPos.y - this.tileHeight/2);
+                        
+                        // Make line more visible when prey is closer
+                        const opacity = 0.3 + (0.4 * (1 - distToSpottedPrey/20));  // Increase opacity for closer prey
+                        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
+                        this.ctx.setLineDash([3, 3]);
+                        this.ctx.lineWidth = 0.5;
+                        this.ctx.stroke();
+                        this.ctx.setLineDash([]);
+                        this.ctx.lineWidth = 1;
+                    }
+                }
+                
+                // Draw line from leader to alerted prey
+                if (entity.isPackLeader && entity.alertedPrey) {
+                    const leaderPos = this.toIsometric(entity.x, entity.y);
+                    const preyPos = this.toIsometric(entity.alertedPrey.x, entity.alertedPrey.y);
+                    
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(leaderPos.x, leaderPos.y - this.tileHeight/2);
+                    this.ctx.lineTo(preyPos.x, preyPos.y - this.tileHeight/2);
+                    
+                    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    this.ctx.setLineDash([5, 5]);
+                    this.ctx.lineWidth = 0.8;
+                    this.ctx.stroke();
+                    this.ctx.setLineDash([]);
+                    this.ctx.lineWidth = 1;
+                }
+            }
+        }
     }
     
     setupTerrainControls() {
@@ -546,6 +685,44 @@ class IsometricGame {
         terrainHeader.style.marginBottom = '10px';
         terrainHeader.textContent = 'Terrain Settings';
         controls.appendChild(terrainHeader);
+
+        // Add map size selector
+        const mapSizeContainer = document.createElement('div');
+        mapSizeContainer.style.marginBottom = '15px';
+        
+        const mapSizeLabel = document.createElement('div');
+        mapSizeLabel.textContent = 'Map Size:';
+        mapSizeContainer.appendChild(mapSizeLabel);
+        
+        const mapSizeSelect = document.createElement('select');
+        mapSizeSelect.style.width = '100%';
+        mapSizeSelect.style.marginTop = '5px';
+        
+        const sizes = {
+            '64 x 64 (Tiny)': 64,
+            '128 x 128 (Default)': 128,
+            '256 x 256 (Medium)': 256,
+            '512 x 512 (Large)': 512,
+            '1024 x 1024 (Huge)': 1024
+        };
+        
+        Object.entries(sizes).forEach(([label, value]) => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            if (value === this.gameAPI.map.width) {
+                option.selected = true;
+            }
+            mapSizeSelect.appendChild(option);
+        });
+        
+        mapSizeSelect.onchange = () => {
+            const newSize = parseInt(mapSizeSelect.value);
+            this.gameAPI.setMapSize(newSize);
+        };
+        
+        mapSizeContainer.appendChild(mapSizeSelect);
+        controls.appendChild(mapSizeContainer);
 
         const settings = this.gameAPI.terrainSettings;
         const inputs = {
@@ -595,7 +772,8 @@ class IsometricGame {
             showTileInfo: this.createCheckbox('Show Tile Info', this.debug.showTileInfo),
             showGrid: this.createCheckbox('Show Grid', this.debug.showGrid),
             showNextTarget: this.createCheckbox('Show Next Target', this.debug.showNextTarget),
-            showMobTiles: this.createCheckbox('Show Mob Tiles', this.debug.showMobTiles)
+            showMobTiles: this.createCheckbox('Show Mob Tiles', this.debug.showMobTiles),
+            showPlayerTile: this.createCheckbox('Show Player Tile', this.debug.showPlayerTile)
         };
 
         Object.entries(debugSettings).forEach(([key, checkbox]) => {
@@ -637,7 +815,8 @@ class IsometricGame {
             },
             'Predators': {
                 maxWolves: this.createSlider('Max Wolves', 1, 20, this.gameAPI.entitySettings.maxWolves, 1),
-                wolfSpawnChance: this.createSlider('Wolf Spawn Rate', 0, 0.1, this.gameAPI.entitySettings.wolfSpawnChance, 0.001)
+                wolfSpawnChance: this.createSlider('Wolf Spawn Rate', 0, 0.1, this.gameAPI.entitySettings.wolfSpawnChance, 0.001),
+                maxPackLeaders: this.createSlider('Max Pack Leaders', 1, 5, this.gameAPI.entitySettings.maxPackLeaders, 1)
             }
         };
 
@@ -653,8 +832,11 @@ class IsometricGame {
             section.appendChild(sectionHeader);
 
             Object.entries(controls).forEach(([key, input]) => {
-                input.oninput = () => {
+                input.oninput = (e) => {
+                    const newValue = parseFloat(e.target.value);
+                    // Update both the game settings and the display
                     this.gameAPI.entitySettings[key] = parseFloat(input.value);
+                    input.valueDisplay.textContent = newValue;
                 };
                 section.appendChild(input.parentElement);
             });
@@ -681,7 +863,9 @@ class IsometricGame {
         
         const valueDisplay = document.createElement('span');
         valueDisplay.textContent = value;
-        input.oninput = () => valueDisplay.textContent = input.value;
+        
+        // Store the display element so we can update it
+        input.valueDisplay = valueDisplay;
         
         container.appendChild(labelElement);
         container.appendChild(input);

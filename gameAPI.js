@@ -9,6 +9,15 @@ class GameAPI {
             WOLF: 'wolf'
         };
         
+        // Map size presets
+        this.mapSizes = {
+            TINY: 64,
+            SMALL: 128,
+            MEDIUM: 256,
+            LARGE: 512,
+            HUGE: 1024
+        };
+        
         // Entity settings
         this.entitySettings = {
             maxFish: 20,
@@ -19,7 +28,12 @@ class GameAPI {
             cowSpawnChance: 0.01,
             maxWolves: 8,
             wolfSpawnChance: 0.005,
-            wolfStarvationHunger: 95  // Wolves die when hunger reaches this level
+            wolfStarvationHunger: 95,
+            wolfPackChance: 0.7,
+            maxPackSize: 4,
+            packFollowDistance: 3,
+            packSpreadDistance: 2,
+            maxPackLeaders: 1  // Maximum number of pack leaders allowed
         };
 
         this.tileTypes = {
@@ -43,8 +57,8 @@ class GameAPI {
         
         this.map = {
             data: [],
-            width: 128,
-            height: 128
+            width: this.mapSizes.SMALL,  // Default to 128x128
+            height: this.mapSizes.SMALL
         };
 
         // Initialize noise generator with seed
@@ -58,6 +72,35 @@ class GameAPI {
             [this.tileTypes.WATER]: 0.05
         };
         this.SPRINT_MULTIPLIER = 2.0;  // Sprint is 2x normal speed
+    }
+
+    setMapSize(size) {
+        this.map.width = size;
+        this.map.height = size;
+        
+        // Clear all existing entities except player
+        for (let [id, entity] of this.entities.entries()) {
+            if (entity.type !== this.entityTypes.PLAYER) {
+                this.entities.delete(id);
+            }
+        }
+        
+        // Regenerate noise with current seed
+        this.noise = new PerlinNoise(this.terrainSettings.seed);
+        
+        this.generateTerrain();
+        
+        // Find new spawn point and move player there
+        const player = Array.from(this.entities.values())
+            .find(entity => entity.type === this.entityTypes.PLAYER);
+        if (player) {
+            player.x = this.spawnPoint.x;
+            player.y = this.spawnPoint.y;
+        }
+        
+        if (this.onEntitiesReset) {
+            this.onEntitiesReset();
+        }
     }
 
     generateTerrain() {
@@ -101,9 +144,6 @@ class GameAPI {
 
         // Find a valid spawn point
         this.spawnPoint = this.findSpawnPoint();
-        
-        // Then reset entities to valid positions
-        this.resetEntities();
     }
 
     addDarkGrass() {
@@ -153,21 +193,30 @@ class GameAPI {
     }
 
     updateTerrainSettings(newSettings) {
-        this.terrainSettings = {
-            ...this.terrainSettings,
-            ...newSettings
-        };
+        // Update terrain settings
+        Object.assign(this.terrainSettings, newSettings);
         
-        if (newSettings.seed !== undefined) {
-            this.noise = new PerlinNoise(this.terrainSettings.seed);
-        }
-        
+        // Regenerate terrain with new settings
         this.generateTerrain();
         
-        // Notify any listeners that entities have been repositioned
-        if (this.onEntitiesReset) {
-            this.onEntitiesReset();
+        // Clear all existing entities except player
+        for (let [id, entity] of this.entities.entries()) {
+            if (entity.type !== this.entityTypes.PLAYER) {
+                this.entities.delete(id);
+            }
         }
+        
+        // Find new spawn point and move player there
+        this.spawnPoint = this.findSpawnPoint();
+        const player = Array.from(this.entities.values())
+            .find(entity => entity.type === this.entityTypes.PLAYER);
+        if (player) {
+            player.x = this.spawnPoint.x;
+            player.y = this.spawnPoint.y;
+        }
+        
+        // Notify game to update camera
+        if (this.onEntitiesReset) this.onEntitiesReset();
     }
 
     findSpawnPoint() {
@@ -224,6 +273,11 @@ class GameAPI {
 
     // Entity methods
     createEntity(type, x, y) {
+        // Check if position is within map bounds
+        if (x < 0 || x >= this.map.width || y < 0 || y >= this.map.height) {
+            return null;
+        }
+        
         const entity = {
             id: Date.now().toString(),
             type,
@@ -232,9 +286,15 @@ class GameAPI {
             velocityX: 0,
             velocityY: 0,
             isHunting: false,
-            hunger: type === this.entityTypes.WOLF ? 0 : null,  // Only wolves get hungry
-            fleeTarget: null,  // For prey animals to track what's chasing them
-            huntTarget: null   // For wolves to track their prey
+            hunger: type === this.entityTypes.WOLF ? 0 : null,
+            fleeTarget: null,
+            huntTarget: null,
+            packLeader: null,
+            packMembers: [],
+            wantsPack: false,
+            isPackLeader: false,
+            spottedPrey: null,
+            alertedPrey: null
         };
         this.entities.set(entity.id, entity);
         return entity;
@@ -366,18 +426,40 @@ class GameAPI {
     spawnLandAnimal(type) {
         let attempts = 100;
         while (attempts > 0) {
-            const x = Math.floor(Math.random() * this.map.width);
-            const y = Math.floor(Math.random() * this.map.height);
+            // Keep spawns well within map boundaries
+            const safeMargin = 5;  // Larger margin to keep mobs away from edges
+            const x = safeMargin + Math.floor(Math.random() * (this.map.width - safeMargin * 2));
+            const y = safeMargin + Math.floor(Math.random() * (this.map.height - safeMargin * 2));
+            
             const tile = this.getTile(x, y);
             
-            if (tile !== null && tile !== this.tileTypes.WATER) {
+            // Double check that position is valid and within bounds
+            if (x >= 0 && x < this.map.width && 
+                y >= 0 && y < this.map.height && 
+                tile !== null && 
+                tile !== this.tileTypes.WATER) {
                 const animal = this.createEntity(type, x, y);
+                if (animal) {
+                    animal.moveTimer = Math.random() * 200;
+                    animal.moveDirection = Math.random() * Math.PI * 2;
+                    return animal;
+                }
+            }
+            attempts--;
+        }
+        
+        // If no valid spawn found after all attempts, try center of map
+        const centerX = Math.floor(this.map.width / 2);
+        const centerY = Math.floor(this.map.height / 2);
+        if (this.getTile(centerX, centerY) !== this.tileTypes.WATER) {
+            const animal = this.createEntity(type, centerX, centerY);
+            if (animal) {
                 animal.moveTimer = Math.random() * 200;
                 animal.moveDirection = Math.random() * Math.PI * 2;
                 return animal;
             }
-            attempts--;
         }
+        return null;  // Return null if no valid spawn position found
     }
 
     updateLandAnimal(animal) {
@@ -459,6 +541,11 @@ class GameAPI {
                 animal.moveDirection = Math.random() * Math.PI * 2;
             }
         }
+        
+        // Add boundary check to normal movement
+        const margin = 2;
+        animal.x = Math.max(margin, Math.min(this.map.width - margin, animal.x));
+        animal.y = Math.max(margin, Math.min(this.map.height - margin, animal.y));
     }
 
     spawnWolf() {
@@ -468,12 +555,12 @@ class GameAPI {
             const y = Math.floor(Math.random() * this.map.height);
             const tile = this.getTile(x, y);
             
-            // Wolves spawn on grass or dark grass
             if (tile === this.tileTypes.GRASS || tile === this.tileTypes.DARK_GRASS) {
                 const wolf = this.createEntity(this.entityTypes.WOLF, x, y);
                 wolf.moveTimer = Math.random() * 150;
                 wolf.moveDirection = Math.random() * Math.PI * 2;
-                wolf.isMoving = true;  // Wolves are more active
+                wolf.isMoving = true;
+                wolf.wantsPack = Math.random() < this.entitySettings.wolfPackChance;
                 return wolf;
             }
             attempts--;
@@ -481,15 +568,65 @@ class GameAPI {
     }
 
     updateWolf(wolf) {
+        // Check for nearby prey and alert pack
+        if (!wolf.isHunting && wolf.packLeader) {
+            const nearbyPrey = this.findClosestPrey(wolf, 15);  // Larger search radius for spotting
+            if (nearbyPrey && nearbyPrey !== wolf.packLeader.huntTarget) {
+                wolf.spottedPrey = nearbyPrey;
+                wolf.packLeader.alertedPrey = nearbyPrey;
+            } else {
+                wolf.spottedPrey = null;
+            }
+        }
+        
+        // Try to join or create a pack if wolf wants one
+        this.findOrCreatePack(wolf);
+        
+        // Pack leader recruitment behavior
+        if (wolf.isPackLeader && wolf.hunger < 40 && wolf.packMembers.length < this.entitySettings.maxPackSize) {
+            this.seekPackMembers(wolf);
+        }
+
         // Update hunger (increases over time)
         wolf.hunger += 0.02;
         
         // Check for starvation
         if (wolf.hunger >= this.entitySettings.wolfStarvationHunger) {
+            // If this wolf dies, update pack relationships
+            if (wolf.isPackLeader) {
+                // Dissolve the pack if leader dies
+                for (let member of wolf.packMembers) {
+                    member.packLeader = null;
+                    member.wantsPack = Math.random() < this.entitySettings.wolfPackChance;
+                }
+            } else if (wolf.packLeader) {
+                // Remove from pack if member dies
+                const index = wolf.packLeader.packMembers.indexOf(wolf);
+                if (index > -1) {
+                    wolf.packLeader.packMembers.splice(index, 1);
+                }
+            }
             this.removeEntity(wolf.id);
             return;
         }
-        
+
+        // Pack behavior
+        if (wolf.packLeader) {
+            // Follow pack leader
+            this.followPackLeader(wolf);
+            // Share hunting target with pack
+            if (wolf.packLeader.huntTarget) {
+                wolf.huntTarget = wolf.packLeader.huntTarget;
+                wolf.isHunting = true;
+            }
+        } else if (wolf.isPackLeader && wolf.packMembers.length > 0) {
+            // Pack leaders coordinate hunting
+            if (wolf.isHunting && wolf.huntTarget) {
+                // Spread pack members around the target
+                this.coordinatePackHunt(wolf);
+            }
+        }
+
         // Alert nearby prey if wolf is getting hungry
         if (wolf.hunger > 60) {
             this.alertNearbyPrey(wolf);
@@ -503,33 +640,84 @@ class GameAPI {
         }
         
         if (wolf.isHunting) {
-            // Find closest prey if we don't have a target
-            if (!wolf.huntTarget) {
-                wolf.huntTarget = this.findClosestPrey(wolf);
+            // Regularly check for closer prey, especially when very hungry
+            if (!wolf.huntTarget || Math.random() < 0.05) {
+                // Check alerted prey first if leader
+                if (wolf.isPackLeader && wolf.alertedPrey) {
+                    wolf.huntTarget = wolf.alertedPrey;
+                    wolf.alertedPrey = null;
+                } else {
+                    wolf.huntTarget = this.findClosestPrey(wolf);
+                }
                 // If no prey found and very hungry, increase search radius
                 if (!wolf.huntTarget && wolf.hunger > 85) {
-                    wolf.huntTarget = this.findClosestPrey(wolf, 20);  // Larger search radius when desperate
+                    wolf.huntTarget = this.findClosestPrey(wolf, 20);
                 }
             }
             
             if (wolf.huntTarget) {
+                // Verify target still exists (hasn't been eaten by another wolf)
+                if (!this.entities.has(wolf.huntTarget.id)) {
+                    wolf.huntTarget = null;
+                    return;
+                }
+                
                 // Calculate direction to prey
                 const dx = wolf.huntTarget.x - wolf.x;
                 const dy = wolf.huntTarget.y - wolf.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 
+                // Switch targets if current target is too far away
+                if (distance > 15) {  // If target is too far
+                    const closerPrey = this.findClosestPrey(wolf, 10);  // Look for closer prey
+                    if (closerPrey) {
+                        wolf.huntTarget = closerPrey;
+                        return;  // Restart the hunt with new target
+                    }
+                }
+                
                 // If we caught the prey
                 if (distance < 0.5) {
                     this.removeEntity(wolf.huntTarget.id);
-                    wolf.hunger = 0;  // Reset hunger
-                    wolf.isHunting = false;
+                    // Clear hunt target before resetting hunger
+                    const target = wolf.huntTarget;
                     wolf.huntTarget = null;
+                    wolf.isHunting = false;
+                    
+                    // Share food with pack
+                    if (wolf.isPackLeader) {
+                        // Reset leader and all pack members' hunger
+                        wolf.hunger = 0;
+                        for (let member of wolf.packMembers) {
+                            member.hunger = 0;
+                            member.isHunting = false;
+                            member.huntTarget = null;
+                        }
+                    } else if (wolf.packLeader) {
+                        // Reset leader and all pack members' hunger
+                        wolf.packLeader.hunger = 0;
+                        wolf.packLeader.isHunting = false;
+                        wolf.packLeader.huntTarget = null;
+                        wolf.hunger = 0;
+                        for (let member of wolf.packLeader.packMembers) {
+                            member.hunger = 0;
+                            member.isHunting = false;
+                            member.huntTarget = null;
+                        }
+                    } else {
+                        // Lone wolf just resets own hunger
+                        wolf.hunger = 0;
+                    }
                     return;
                 }
                 
                 // Chase the prey
                 wolf.moveDirection = Math.atan2(dy, dx);
-                const speed = 0.04;  // Faster when hunting
+                // Speed increases with hunger
+                const baseSpeed = 0.04;
+                const hungerBoost = (wolf.hunger / 100) * 0.02;  // Up to 0.02 extra speed when very hungry
+                const speed = baseSpeed + hungerBoost;
+                
                 const newX = wolf.x + Math.cos(wolf.moveDirection) * speed;
                 const newY = wolf.y + Math.sin(wolf.moveDirection) * speed;
                 
@@ -537,14 +725,19 @@ class GameAPI {
                 if (this.getTile(newX, newY) !== null) {
                     wolf.x = newX;
                     wolf.y = newY;
+                } else {
+                    // If blocked by terrain, try to find a new target
+                    wolf.huntTarget = this.findClosestPrey(wolf);
                 }
                 
                 // Alert prey that it's being hunted
-                wolf.huntTarget.fleeTarget = wolf;
+                if (wolf.huntTarget) {
+                    wolf.huntTarget.fleeTarget = wolf;
+                }
             }
             else {
-                // If no prey found, keep moving randomly but faster
-                const speed = 0.035;  // Faster searching speed when hungry
+                // If no target found, move randomly but faster
+                const speed = 0.035;
                 const dx = Math.cos(wolf.moveDirection) * speed;
                 const dy = Math.sin(wolf.moveDirection) * speed;
                 
@@ -625,6 +818,128 @@ class GameAPI {
                 // If prey is within alert radius of hungry wolf
                 if (distance < alertRadius) {
                     entity.fleeTarget = wolf;
+                }
+            }
+        }
+    }
+
+    findOrCreatePack(wolf) {
+        if (!wolf.wantsPack || wolf.packLeader || wolf.isPackLeader) return;
+
+        // Count current pack leaders
+        let currentLeaders = Array.from(this.entities.values())
+            .filter(entity => entity.type === this.entityTypes.WOLF && entity.isPackLeader)
+            .length;
+
+        // Look for existing packs that aren't full
+        for (let entity of this.entities.values()) {
+            if (entity.type === this.entityTypes.WOLF && 
+                entity.isPackLeader && 
+                entity.packMembers.length < this.entitySettings.maxPackSize) {
+                
+                const dx = entity.x - wolf.x;
+                const dy = entity.y - wolf.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Join nearby pack if found
+                if (distance < 10) {
+                    wolf.packLeader = entity;
+                    entity.packMembers.push(wolf);
+                    return;
+                }
+            }
+        }
+
+        // If no suitable pack found, maybe become a pack leader (more likely when few leaders exist)
+        const leaderChance = 0.3 * (1 - (currentLeaders / this.entitySettings.maxPackLeaders));
+        if (Math.random() < leaderChance && currentLeaders < this.entitySettings.maxPackLeaders) {
+            wolf.isPackLeader = true;
+            wolf.packMembers = [];
+        }
+    }
+
+    followPackLeader(wolf) {
+        const leader = wolf.packLeader;
+        const dx = leader.x - wolf.x;
+        const dy = leader.y - wolf.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > this.entitySettings.packFollowDistance) {
+            // Calculate position in formation
+            const index = wolf.packLeader.packMembers.indexOf(wolf);
+            const angle = (Math.PI * 2 * index) / wolf.packLeader.packMembers.length;
+            // Follow behind the leader in a V formation
+            const targetX = leader.x - Math.cos(leader.moveDirection) * this.entitySettings.packFollowDistance
+                           + Math.cos(angle) * this.entitySettings.packSpreadDistance;
+            const targetY = leader.y - Math.sin(leader.moveDirection) * this.entitySettings.packFollowDistance
+                           + Math.sin(angle) * this.entitySettings.packSpreadDistance;
+
+            // Move toward formation position
+            const toTargetX = targetX - wolf.x;
+            const toTargetY = targetY - wolf.y;
+            const targetDistance = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY);
+            
+            if (targetDistance > 0.1) {
+                const speed = 0.04;  // Slightly faster to keep up with leader
+                const newX = wolf.x + (toTargetX / targetDistance) * speed;
+                const newY = wolf.y + (toTargetY / targetDistance) * speed;
+                
+                if (this.getTile(newX, newY) !== null) {
+                    wolf.x = newX;
+                    wolf.y = newY;
+                    // Match leader's direction when close to formation position
+                    if (targetDistance < 1) {
+                        wolf.moveDirection = leader.moveDirection;
+                    }
+                }
+            }
+        }
+    }
+
+    coordinatePackHunt(leader) {
+        const target = leader.huntTarget;
+        if (!target) return;
+
+        // Spread pack members around the prey
+        leader.packMembers.forEach((member, index) => {
+            const angle = (Math.PI * 2 * index) / leader.packMembers.length;
+            member.preferredAngle = angle;  // Store preferred attack angle
+        });
+    }
+
+    seekPackMembers(leader) {
+        const recruitRadius = 12;  // How far to look for potential members
+        
+        for (let entity of this.entities.values()) {
+            if (entity.type === this.entityTypes.WOLF && 
+                entity.wantsPack && 
+                !entity.packLeader && 
+                !entity.isPackLeader) {
+                
+                const dx = entity.x - leader.x;
+                const dy = entity.y - leader.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If found a potential member within range
+                if (distance < recruitRadius) {
+                    // Move towards the potential member
+                    leader.moveDirection = Math.atan2(dy, dx);
+                    const speed = 0.03;
+                    const newX = leader.x + Math.cos(leader.moveDirection) * speed;
+                    const newY = leader.y + Math.sin(leader.moveDirection) * speed;
+                    
+                    if (this.getTile(newX, newY) !== null) {
+                        leader.x = newX;
+                        leader.y = newY;
+                        
+                        // If close enough, recruit the wolf
+                        if (distance < 2) {
+                            entity.packLeader = leader;
+                            leader.packMembers.push(entity);
+                            return;  // Only recruit one wolf at a time
+                        }
+                    }
+                    return;  // Focus on moving towards this potential member
                 }
             }
         }
