@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Isometric Game</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #333333;
+        }
+        input[type="range"] {
+            width: 100px;
+            margin: 0 10px;
+        }
+        button {
+            margin-top: 10px;
+            padding: 5px 10px;
+            width: 100%;
+        }
+        .controls {
+            position: fixed;
+            top: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #terrainControls {
+            left: 10px;
+        }
+        #mobControls {
+            right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script src="perlin.js"></script>
+    <script src="gameAPI.js"></script>
+    <script src="game.js"></script>
+</body>
+</html> 
