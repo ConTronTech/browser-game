@@ -524,29 +524,43 @@ class IsometricGame {
                     this.ctx.beginPath();
                     this.ctx.arc(0, 0, 2, 0, Math.PI * 2);
                     this.ctx.fillStyle = '#FFD700';
-                    this.ctx.strokeStyle = '#000000';  // Add black outline
+                    this.ctx.strokeStyle = '#000000';
                     this.ctx.fill();
                     this.ctx.stroke();
                 }
                 
+                this.ctx.restore();
+                
                 // Draw hunger bar above wolf
                 if (entity.hunger !== null) {
                     // Color changes based on hunger level
-                    let hungerColor;
-                    if (entity.hunger > 85) {
-                        hungerColor = '#ff0000';  // Red when close to death
-                    } else if (entity.isHunting) {
-                        hungerColor = '#ff6600';  // Orange when hunting
-                    } else {
-                        hungerColor = '#00ff00';  // Green when satisfied
-                    }
+                    const hungerPercent = entity.hunger / 100;
+                    // Interpolate between green and red based on hunger
+                    const red = Math.floor(255 * hungerPercent);
+                    const green = Math.floor(255 * (1 - hungerPercent));
+                    const hungerColor = `rgb(${red}, ${green}, 0)`;
+                    
+                    // Draw hunger bar at fixed position above wolf
+                    const barWidth = 10;
+                    const barHeight = 2;
+                    const barY = screenY - 8;  // Position above wolf
+                    
                     this.ctx.fillStyle = hungerColor;
-                    this.ctx.fillRect(-5, -8, 10 * (entity.hunger / 100), 2);
+                    this.ctx.fillRect(
+                        screenX - barWidth/2,
+                        barY,
+                        barWidth * (1 - hungerPercent),  // Reverse the fill direction
+                        barHeight
+                    );
+                    
                     this.ctx.strokeStyle = '#000000';
-                    this.ctx.strokeRect(-5, -8, 10, 2);
+                    this.ctx.strokeRect(
+                        screenX - barWidth/2,
+                        barY,
+                        barWidth,
+                        barHeight
+                    );
                 }
-
-                this.ctx.restore();
             }
             
             // Color based on entity type

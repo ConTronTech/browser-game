@@ -463,6 +463,9 @@ class GameAPI {
     }
 
     updateLandAnimal(animal) {
+        // Boundary margin
+        const margin = 2;
+        
         // Check if being hunted or near hungry wolf
         if (animal.fleeTarget) {
             // Calculate direction away from predator
@@ -481,8 +484,12 @@ class GameAPI {
                 const speedBoost = Math.max(0, (12 - distance) / 12) * 0.02;
                 const speed = baseSpeed + speedBoost;
                 
-                const newX = animal.x + Math.cos(animal.moveDirection) * speed;
-                const newY = animal.y + Math.sin(animal.moveDirection) * speed;
+                let newX = animal.x + Math.cos(animal.moveDirection) * speed;
+                let newY = animal.y + Math.sin(animal.moveDirection) * speed;
+                
+                // Keep within map boundaries
+                newX = Math.max(margin, Math.min(this.map.width - margin, newX));
+                newY = Math.max(margin, Math.min(this.map.height - margin, newY));
                 
                 const newTile = this.getTile(newX, newY);
                 // Try to move in flee direction
@@ -500,10 +507,14 @@ class GameAPI {
                     ];
                     for (let angle of escapeAngles) {
                         const newDirection = animal.moveDirection + angle;
-                        const altX = animal.x + Math.cos(newDirection) * speed;
-                        const altY = animal.y + Math.sin(newDirection) * speed;
-                        const altTile = this.getTile(altX, altY);
+                        let altX = animal.x + Math.cos(newDirection) * speed;
+                        let altY = animal.y + Math.sin(newDirection) * speed;
                         
+                        // Keep alternate positions within boundaries too
+                        altX = Math.max(margin, Math.min(this.map.width - margin, altX));
+                        altY = Math.max(margin, Math.min(this.map.height - margin, altY));
+                        
+                        const altTile = this.getTile(altX, altY);
                         if ((animal.type === this.entityTypes.FISH && altTile === this.tileTypes.WATER) ||
                             (animal.type !== this.entityTypes.FISH && altTile !== this.tileTypes.WATER)) {
                             animal.x = altX;
@@ -527,11 +538,12 @@ class GameAPI {
         
         if (animal.isMoving && !animal.fleeTarget) {
             const speed = 0.015;
-            const dx = Math.cos(animal.moveDirection) * speed;
-            const dy = Math.sin(animal.moveDirection) * speed;
+            let newX = animal.x + Math.cos(animal.moveDirection) * speed;
+            let newY = animal.y + Math.sin(animal.moveDirection) * speed;
             
-            const newX = animal.x + dx;
-            const newY = animal.y + dy;
+            // Keep within map boundaries
+            newX = Math.max(margin, Math.min(this.map.width - margin, newX));
+            newY = Math.max(margin, Math.min(this.map.height - margin, newY));
             
             const newTile = this.getTile(newX, newY);
             if (newTile !== null && newTile !== this.tileTypes.WATER) {
@@ -541,11 +553,6 @@ class GameAPI {
                 animal.moveDirection = Math.random() * Math.PI * 2;
             }
         }
-        
-        // Add boundary check to normal movement
-        const margin = 2;
-        animal.x = Math.max(margin, Math.min(this.map.width - margin, animal.x));
-        animal.y = Math.max(margin, Math.min(this.map.height - margin, animal.y));
     }
 
     spawnWolf() {
@@ -568,6 +575,30 @@ class GameAPI {
     }
 
     updateWolf(wolf) {
+        // Helper function to find distance to nearest land
+        const findDistanceToLand = (x, y, maxSearch = 5) => {
+            let minDistance = Infinity;
+            let nearestLandX = null;
+            let nearestLandY = null;
+            
+            for (let dx = -maxSearch; dx <= maxSearch; dx++) {
+                for (let dy = -maxSearch; dy <= maxSearch; dy++) {
+                    const checkX = Math.floor(x + dx);
+                    const checkY = Math.floor(y + dy);
+                    const tile = this.getTile(checkX, checkY);
+                    if (tile !== null && tile !== this.tileTypes.WATER) {
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            nearestLandX = checkX;
+                            nearestLandY = checkY;
+                        }
+                    }
+                }
+            }
+            return { distance: minDistance, x: nearestLandX, y: nearestLandY };
+        };
+
         // Check for nearby prey and alert pack
         if (!wolf.isHunting && wolf.packLeader) {
             const nearbyPrey = this.findClosestPrey(wolf, 15);  // Larger search radius for spotting
@@ -713,21 +744,69 @@ class GameAPI {
                 
                 // Chase the prey
                 wolf.moveDirection = Math.atan2(dy, dx);
-                // Speed increases with hunger
                 const baseSpeed = 0.04;
-                const hungerBoost = (wolf.hunger / 100) * 0.02;  // Up to 0.02 extra speed when very hungry
+                const hungerBoost = (wolf.hunger / 100) * 0.02;
                 const speed = baseSpeed + hungerBoost;
                 
                 const newX = wolf.x + Math.cos(wolf.moveDirection) * speed;
                 const newY = wolf.y + Math.sin(wolf.moveDirection) * speed;
                 
-                // Move if the new position is valid
-                if (this.getTile(newX, newY) !== null) {
+                // Check distance to nearest land from new position
+                const landInfo = findDistanceToLand(newX, newY);
+                
+                const currentTile = this.getTile(wolf.x, wolf.y);
+                const newTile = this.getTile(newX, newY);
+                const targetTile = this.getTile(wolf.huntTarget.x, wolf.huntTarget.y);
+                
+                // Allow water movement if:
+                // 1. Hunting water prey OR
+                // 2. Close to land (within 3 tiles) OR
+                // 3. Very hungry (>80) and prey is in sight
+                const canMoveInWater = 
+                    (targetTile === this.tileTypes.WATER && wolf.huntTarget) ||
+                    landInfo.distance <= 3 ||
+                    (wolf.hunger > 80 && distance < 5);
+                
+                if (newTile !== null && (newTile !== this.tileTypes.WATER || canMoveInWater)) {
                     wolf.x = newX;
                     wolf.y = newY;
                 } else {
-                    // If blocked by terrain, try to find a new target
-                    wolf.huntTarget = this.findClosestPrey(wolf);
+                    // If in water and far from land, move towards nearest land
+                    if (currentTile === this.tileTypes.WATER) {
+                        const nearestLand = findDistanceToLand(wolf.x, wolf.y);
+                        if (nearestLand.x !== null) {
+                            // Move towards nearest land
+                            const dx = nearestLand.x - wolf.x;
+                            const dy = nearestLand.y - wolf.y;
+                            wolf.moveDirection = Math.atan2(dy, dx);
+                            const escapeSpeed = 0.05;  // Slightly faster to escape water
+                            wolf.x += Math.cos(wolf.moveDirection) * escapeSpeed;
+                            wolf.y += Math.sin(wolf.moveDirection) * escapeSpeed;
+                        } else {
+                            // If no land found in search radius, pick a random direction
+                            wolf.moveDirection = Math.random() * Math.PI * 2;
+                        }
+                    } else {
+                        // If blocked by terrain, try to find a new target
+                        wolf.huntTarget = this.findClosestPrey(wolf);
+                    }
+                }
+                
+                // Try to get back to land if too far from shore
+                if (currentTile === this.tileTypes.WATER && 
+                    (!wolf.huntTarget || targetTile !== this.tileTypes.WATER) &&
+                    findDistanceToLand(wolf.x, wolf.y) > 3) {
+                    // Look for nearby land
+                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+                        const checkX = wolf.x + Math.cos(angle) * speed * 2;
+                        const checkY = wolf.y + Math.sin(angle) * speed * 2;
+                        const checkTile = this.getTile(checkX, checkY);
+                        if (checkTile !== null && checkTile !== this.tileTypes.WATER) {
+                            wolf.x = checkX;
+                            wolf.y = checkY;
+                            break;
+                        }
+                    }
                 }
                 
                 // Alert prey that it's being hunted
@@ -752,13 +831,12 @@ class GameAPI {
                 }
             }
         } else {
-            // More active movement when not hunting
+            // Normal movement (when not hunting)
             wolf.moveTimer--;
             if (wolf.moveTimer <= 0) {
-                // Shorter pauses between movements
                 wolf.moveTimer = 30 + Math.random() * 70;
                 wolf.moveDirection = Math.random() * Math.PI * 2;
-                wolf.isMoving = Math.random() < 0.8;  // 80% chance to move
+                wolf.isMoving = Math.random() < 0.8;
             }
             
             if (wolf.isMoving) {
@@ -769,11 +847,27 @@ class GameAPI {
                 const newX = wolf.x + dx;
                 const newY = wolf.y + dy;
                 
-                // Wolves can move on any valid tile
-                if (this.getTile(newX, newY) !== null) {
+                const currentTile = this.getTile(wolf.x, wolf.y);
+                const newTile = this.getTile(newX, newY);
+                const landInfo = findDistanceToLand(newX, newY);
+                
+                // If currently in water, actively seek land
+                if (currentTile === this.tileTypes.WATER) {
+                    const nearestLand = findDistanceToLand(wolf.x, wolf.y, 10); // Increased search radius
+                    if (nearestLand.x !== null) {
+                        // Move directly towards nearest land
+                        const dx = nearestLand.x - wolf.x;
+                        const dy = nearestLand.y - wolf.y;
+                        wolf.moveDirection = Math.atan2(dy, dx);
+                        const escapeSpeed = 0.04; // Faster movement to escape water
+                        wolf.x += Math.cos(wolf.moveDirection) * escapeSpeed;
+                        wolf.y += Math.sin(wolf.moveDirection) * escapeSpeed;
+                    }
+                } else if (newTile !== null && newTile !== this.tileTypes.WATER) {
                     wolf.x = newX;
                     wolf.y = newY;
                 } else {
+                    // If would move into water, change direction
                     wolf.moveDirection = Math.random() * Math.PI * 2;
                 }
             }
@@ -783,6 +877,8 @@ class GameAPI {
     findClosestPrey(wolf, searchRadius = 10) {
         let closestPrey = null;
         let closestDistance = Infinity;
+        let waterPrey = null;
+        let waterPreyDistance = Infinity;
         
         for (let entity of this.entities.values()) {
             if (entity.type === this.entityTypes.PIG || 
@@ -793,7 +889,11 @@ class GameAPI {
                 const dy = entity.y - wolf.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 
-                if (distance < closestDistance && distance < searchRadius) {
+                // Check if prey is in water
+                const preyInWater = this.getTile(entity.x, entity.y) === this.tileTypes.WATER;
+                
+                if (distance < searchRadius && distance < closestDistance) {
+                    // Always track the absolute closest prey
                     closestDistance = distance;
                     closestPrey = entity;
                 }
