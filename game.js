@@ -30,9 +30,11 @@ class IsometricGame {
         this.canvas = document.getElementById('gameCanvas');
         this.ctx = this.canvas.getContext('2d');
         
-        // Set canvas size
-        this.canvas.width = 800;
-        this.canvas.height = 600;
+        // Set canvas size to match window
+        this.resizeCanvas();
+        
+        // Add window resize listener
+        window.addEventListener('resize', () => this.resizeCanvas());
         
         // Tile dimensions
         this.tileWidth = 32;    // Width of tile in world space
@@ -82,7 +84,10 @@ class IsometricGame {
             showGrid: false,
             showNextTarget: true,    // Default to on
             showMobTiles: true,      // Default to on
-            showPlayerTile: false     // New setting, default to on
+            showPlayerTile: false,     // New setting, default to on
+            timePaused: false,
+            timeScale: 1,  // 1 = normal speed, 2 = 2x speed, etc.
+            isFullscreen: false
         };
         
         this.init();
@@ -103,7 +108,11 @@ class IsometricGame {
                 case 'a': this.movement.left = true; break;
                 case 'd': this.movement.right = true; break;
                 case 'shift': this.movement.sprint = true; break;
-                case 'e': this.interact(); break;  // Add interact key
+                case 'e': this.interact(); break;
+                case 'f11': 
+                    e.preventDefault();  // Prevent default F11 behavior
+                    this.toggleFullscreen(); 
+                    break;
             }
         });
 
@@ -246,10 +255,36 @@ class IsometricGame {
     }
     
     gameLoop() {
-        this.updatePlayerMovement();
-        this.gameAPI.updateEntities();
-        this.draw();
-        requestAnimationFrame(() => this.gameLoop());
+        const normalTimeStep = 1000 / 60;  // Normal frame time in ms
+        let lastTime = performance.now();
+        
+        const loop = (currentTime) => {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            // Update game state
+            if (!this.debug.timePaused) {
+                // Always update player movement at normal speed
+                this.updatePlayerMovement();
+                
+                // Calculate time scale
+                let timeScale = 1;
+                if (!this.movement.up && !this.movement.down && 
+                    !this.movement.left && !this.movement.right) {
+                    timeScale = this.debug.timeScale;
+                }
+                
+                // Update entities with scaled time
+                for (let i = 0; i < timeScale; i++) {
+                    this.gameAPI.updateEntities(deltaTime);
+                }
+            }
+            
+            this.draw();
+            requestAnimationFrame(loop);
+        };
+        
+        requestAnimationFrame(loop);
     }
     
     toIsometric(x, y) {
@@ -887,8 +922,17 @@ class IsometricGame {
             showGrid: this.createCheckbox('Show Grid', this.debug.showGrid),
             showNextTarget: this.createCheckbox('Show Next Target', this.debug.showNextTarget),
             showMobTiles: this.createCheckbox('Show Mob Tiles', this.debug.showMobTiles),
-            showPlayerTile: this.createCheckbox('Show Player Tile', this.debug.showPlayerTile)
+            showPlayerTile: this.createCheckbox('Show Player Tile', this.debug.showPlayerTile),
+            timePaused: this.createCheckbox('Pause Time', this.debug.timePaused)
         };
+
+        // Add time scale slider
+        const timeScaleSlider = this.createSlider('Time Scale', 1, 20, this.debug.timeScale, 1);
+        timeScaleSlider.oninput = (e) => {
+            this.debug.timeScale = parseInt(e.target.value);
+            timeScaleSlider.valueDisplay.textContent = `${e.target.value}x`;
+        };
+        timeScaleSlider.valueDisplay.textContent = '1x';
 
         Object.entries(debugSettings).forEach(([key, checkbox]) => {
             checkbox.addEventListener('change', () => {
@@ -897,6 +941,14 @@ class IsometricGame {
             controls.appendChild(checkbox.parentElement);
         });
         
+        controls.appendChild(timeScaleSlider.parentElement);
+        
+        // Add fullscreen button
+        const fullscreenButton = document.createElement('button');
+        fullscreenButton.textContent = 'Toggle Fullscreen (F11)';
+        fullscreenButton.onclick = () => this.toggleFullscreen();
+        controls.appendChild(fullscreenButton);
+
         // Setup separate mob controls
         this.setupMobControls();
     }
@@ -1180,6 +1232,33 @@ class IsometricGame {
                 // Try to interact with anything at this position
                 this.gameAPI.tryInteract(checkX, checkY);
             }
+        }
+    }
+
+    toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            // Enter fullscreen
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen();
+            }
+            this.debug.isFullscreen = true;
+        } else {
+            // Exit fullscreen
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+            this.debug.isFullscreen = false;
+        }
+    }
+
+    resizeCanvas() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+        
+        // Center camera on player after resize
+        if (this.player) {
+            const iso = this.toIsometric(this.player.x, this.player.y);
+            this.centerCameraOn(iso.x, iso.y);
         }
     }
 }

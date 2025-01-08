@@ -5,14 +5,17 @@
     <link rel="icon" href="data:,">
     <style>
         canvas {
-            border: 1px solid black;
-        }
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            display: block;
+            width: 100vw;
             height: 100vh;
             margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
             background-color: #333333;
         }
         input[type="range"] {
@@ -37,6 +40,7 @@
             background-color: rgba(255, 255, 255, 0.8);
             padding: 10px;
             border-radius: 5px;
+            z-index: 1000;
         }
         #terrainControls {
             left: 10px;
