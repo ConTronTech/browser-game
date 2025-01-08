@@ -43,6 +43,19 @@ class GameAPI {
             DARK_GRASS: 3
         };
         
+        // Foliage settings
+        this.foliage = {
+            trees: new Map(),  // Store tree positions
+            treeChance: 0.1,   // 10% chance for a tree on valid tiles
+            minTreeSpacing: 2,  // Minimum tiles between trees
+            grass: new Map(),   // Store grass positions
+            grassChance: 0.3,   // 30% chance for grass on valid tiles
+            minGrassSpacing: 1,  // Minimum tiles between grass patches
+            rocks: new Map(),
+            rockChance: 0.05,    // 5% chance for rocks
+            minRockSpacing: 2    // Minimum tiles between rocks
+        };
+        
         // Terrain generation settings
         this.terrainSettings = {
             scale: 0.05,         // Base scale of the noise
@@ -72,6 +85,66 @@ class GameAPI {
             [this.tileTypes.WATER]: 0.05
         };
         this.SPRINT_MULTIPLIER = 2.0;  // Sprint is 2x normal speed
+
+        // Inventory system
+        this.inventoryItems = {
+            MEAT: 'meat',
+            FISH: 'fish',
+            BONE: 'bone',
+            WOOD: 'wood',
+            ROCK_SHARD: 'rock_shard',
+            HIDE: 'hide'
+        };
+        
+        // Initialize inventory slots with objects that track item type and count
+        this.inventory = new Array(12).fill(null).map(() => ({
+            item: null,
+            count: 0
+        }));
+
+        // Interaction settings
+        this.interactionRange = 1.5;  // How far player can interact
+        this.interactableTypes = {
+            TREE: 'tree',
+            ROCK: 'rock',
+            GRASS: 'grass'
+        };
+
+        // Harvesting settings
+        this.harvestSettings = {
+            woodChance: 0.7,     // Base chance to get wood
+            axeWoodBonus: 0.2,   // Additional 20% chance with axe
+            axeWoodAmount: 2,    // Get 2 wood pieces when using axe
+            rockChance: 0.5,     // 50% chance to get rock shard
+            axeRemoveBonus: 0.2, // Additional 20% chance to remove with axe
+            removeChance: 0.3,   // Base chance to remove resource
+            boneChance: 0.2,     // 20% chance to get bone from prey
+            hideChance: 0.4,     // 40% chance to get hide from cows
+            preyDamage: 25,      // Damage dealt to prey per interaction
+            preyHealth: {        // Base health for different prey types
+                [this.entityTypes.FISH]: 50,
+                [this.entityTypes.PIG]: 75,
+                [this.entityTypes.COW]: 100
+            }
+        };
+
+        // Crafting system
+        this.craftingRecipes = {
+            'rope': {
+                ingredients: { 'hide': 1 },
+                result: 'rope',
+                count: 2
+            },
+            'stone_axe': {
+                ingredients: {
+                    'wood': 2,
+                    'rock_shard': 3,
+                    'rope': 1
+                },
+                result: 'stone_axe',
+                count: 1
+            }
+        };
     }
 
     setMapSize(size) {
@@ -142,6 +215,15 @@ class GameAPI {
         // Add dark grass in a second pass
         this.addDarkGrass();
 
+        // Generate grass patches before trees
+        this.generateGrass();
+        
+        // Generate rocks
+        this.generateRocks();
+        
+        // Generate trees after terrain is complete
+        this.generateTrees();
+
         // Find a valid spawn point
         this.spawnPoint = this.findSpawnPoint();
     }
@@ -182,6 +264,156 @@ class GameAPI {
                 }
             }
         }
+    }
+
+    generateGrass() {
+        // Clear existing grass
+        this.foliage.grass.clear();
+        
+        for (let y = 0; y < this.map.height; y++) {
+            for (let x = 0; x < this.map.width; x++) {
+                const tile = this.map.data[y][x];
+                
+                // Only place grass on dark grass tiles
+                if (tile === this.tileTypes.DARK_GRASS && 
+                    Math.random() < this.foliage.grassChance) {
+                    
+                    // Check minimum spacing from other grass
+                    let canPlaceGrass = true;
+                    const spacing = this.foliage.minGrassSpacing;
+                    
+                    for (let dy = -spacing; dy <= spacing; dy++) {
+                        for (let dx = -spacing; dx <= spacing; dx++) {
+                            const checkX = x + dx;
+                            const checkY = y + dy;
+                            if (this.foliage.grass.has(`${checkX},${checkY}`)) {
+                                canPlaceGrass = false;
+                                break;
+                            }
+                        }
+                        if (!canPlaceGrass) break;
+                    }
+                    
+                    if (canPlaceGrass) {
+                        this.foliage.grass.set(`${x},${y}`, {
+                            x: x,
+                            y: y,
+                            type: Math.floor(Math.random() * 3)  // Random grass variant (0-2)
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper to check if a position has grass
+    hasGrass(x, y) {
+        return this.foliage.grass.has(`${Math.floor(x)},${Math.floor(y)}`);
+    }
+
+    // Get grass data at position
+    getGrass(x, y) {
+        return this.foliage.grass.get(`${Math.floor(x)},${Math.floor(y)}`);
+    }
+
+    generateRocks() {
+        // Clear existing rocks
+        this.foliage.rocks.clear();
+        
+        for (let y = 0; y < this.map.height; y++) {
+            for (let x = 0; x < this.map.width; x++) {
+                const tile = this.map.data[y][x];
+                
+                // Place rocks on any tile except water
+                if (tile !== this.tileTypes.WATER && 
+                    Math.random() < this.foliage.rockChance) {
+                    
+                    // Check minimum spacing from other rocks
+                    let canPlaceRock = true;
+                    const spacing = this.foliage.minRockSpacing;
+                    
+                    for (let dy = -spacing; dy <= spacing; dy++) {
+                        for (let dx = -spacing; dx <= spacing; dx++) {
+                            const checkX = x + dx;
+                            const checkY = y + dy;
+                            if (this.foliage.rocks.has(`${checkX},${checkY}`)) {
+                                canPlaceRock = false;
+                                break;
+                            }
+                        }
+                        if (!canPlaceRock) break;
+                    }
+                    
+                    if (canPlaceRock) {
+                        this.foliage.rocks.set(`${x},${y}`, {
+                            x: x,
+                            y: y,
+                            type: Math.floor(Math.random() * 3)  // Random rock variant (0-2)
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper to check if a position has a rock
+    hasRock(x, y) {
+        return this.foliage.rocks.has(`${Math.floor(x)},${Math.floor(y)}`);
+    }
+
+    // Get rock data at position
+    getRock(x, y) {
+        return this.foliage.rocks.get(`${Math.floor(x)},${Math.floor(y)}`);
+    }
+
+    generateTrees() {
+        // Clear existing trees
+        this.foliage.trees.clear();
+        
+        for (let y = 0; y < this.map.height; y++) {
+            for (let x = 0; x < this.map.width; x++) {
+                const tile = this.map.data[y][x];
+                
+                // Only place trees on grass or dark grass
+                if ((tile === this.tileTypes.GRASS || tile === this.tileTypes.DARK_GRASS) && 
+                    Math.random() < this.foliage.treeChance) {
+                    
+                    // Check minimum spacing from other trees
+                    let canPlaceTree = true;
+                    const spacing = this.foliage.minTreeSpacing;
+                    
+                    for (let dy = -spacing; dy <= spacing; dy++) {
+                        for (let dx = -spacing; dx <= spacing; dx++) {
+                            const checkX = x + dx;
+                            const checkY = y + dy;
+                            if (this.foliage.trees.has(`${checkX},${checkY}`)) {
+                                canPlaceTree = false;
+                                break;
+                            }
+                        }
+                        if (!canPlaceTree) break;
+                    }
+                    
+                    if (canPlaceTree) {
+                        this.foliage.trees.set(`${x},${y}`, {
+                            x: x,
+                            y: y,
+                            type: Math.floor(Math.random() * 4)  // Random tree variant (0-3)
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper to check if a position has a tree
+    hasTree(x, y) {
+        return this.foliage.trees.has(`${Math.floor(x)},${Math.floor(y)}`);
+    }
+
+    // Get tree data at position
+    getTree(x, y) {
+        return this.foliage.trees.get(`${Math.floor(x)},${Math.floor(y)}`);
     }
 
     resetEntities() {
@@ -283,6 +515,7 @@ class GameAPI {
             type,
             x: parseFloat(x),
             y: parseFloat(y),
+            health: this.harvestSettings.preyHealth[type] || null,  // Set initial health for prey
             velocityX: 0,
             velocityY: 0,
             isHunting: false,
@@ -1043,5 +1276,289 @@ class GameAPI {
                 }
             }
         }
+    }
+
+    addToInventory(item) {
+        // First try to find an existing stack of the same item
+        const existingStack = this.inventory.find(slot => slot.item === item);
+        if (existingStack) {
+            existingStack.count++;
+            this.updateInventoryDisplay();
+            return true;
+        }
+        
+        // If no existing stack, find first empty slot
+        const emptySlot = this.inventory.findIndex(slot => slot.item === null);
+        if (emptySlot !== -1) {
+            this.inventory[emptySlot] = {
+                item: item,
+                count: 1
+            };
+            this.updateInventoryDisplay();
+            return true;
+        }
+        return false;  // Inventory is full
+    }
+
+    removeFromInventory(slot) {
+        if (slot >= 0 && slot < this.inventory.length) {
+            const slotData = this.inventory[slot];
+            if (slotData.count > 1) {
+                slotData.count--;
+            } else {
+                this.inventory[slot] = {
+                    item: null,
+                    count: 0
+                };
+            }
+            this.updateInventoryDisplay();
+            return slotData.item;
+        }
+        return null;
+    }
+
+    updateInventoryDisplay() {
+        const slots = document.querySelectorAll('.inventory-slot');
+        this.inventory.forEach((slotData, index) => {
+            const slot = slots[index];
+            // Make slot droppable
+            slot.setAttribute('draggable', 'true');
+            slot.dataset.slotIndex = index;
+            
+            // Add drag and drop event listeners
+            slot.ondragstart = (e) => this.handleDragStart(e, index);
+            slot.ondragover = (e) => this.handleDragOver(e);
+            slot.ondrop = (e) => this.handleDrop(e, index);
+            
+            if (slotData.item) {
+                // Clear any existing content
+                slot.textContent = '';
+                slot.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+                
+                // Create container for item and tooltip
+                const container = document.createElement('div');
+                container.style.position = 'relative';
+                container.style.width = '100%';
+                container.style.height = '100%';
+                container.style.pointerEvents = 'none';  // Allow drag events to pass through to slot
+                
+                // Create and add item image
+                const img = document.createElement('img');
+                img.src = `assets/objects/items/${slotData.item}.png`;
+                img.style.width = '16px';
+                img.style.height = '16px';
+                img.style.display = 'block';
+                img.style.margin = '7px auto';
+                
+                img.onerror = () => {
+                    console.log(`Failed to load image for ${slotData.item}`);
+                    slot.textContent = slotData.item;
+                };
+                
+                container.appendChild(img);
+                
+                // Add count display if more than 1
+                if (slotData.count > 1) {
+                    const countDisplay = document.createElement('div');
+                    countDisplay.textContent = slotData.count;
+                    countDisplay.style.position = 'absolute';
+                    countDisplay.style.bottom = '2px';
+                    countDisplay.style.right = '2px';
+                    countDisplay.style.fontSize = '10px';
+                    countDisplay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                    countDisplay.style.color = 'white';
+                    countDisplay.style.padding = '1px 3px';
+                    countDisplay.style.borderRadius = '3px';
+                    container.appendChild(countDisplay);
+                }
+                
+                // Add tooltip
+                const tooltip = document.createElement('div');
+                tooltip.className = 'tooltip';
+                tooltip.textContent = this.formatItemName(slotData.item);
+                container.appendChild(tooltip);
+                
+                slot.appendChild(container);
+            } else {
+                slot.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+                slot.textContent = '';
+            }
+        });
+    }
+
+    // Helper function to format item names
+    formatItemName(item) {
+        return item
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+    }
+
+    tryInteract(x, y) {
+        // Check if position has any interactable objects
+        const tree = this.getTree(x, y);
+        const rock = this.getRock(x, y);
+        const grass = this.getGrass(x, y);
+        const entities = Array.from(this.entities.values())
+            .filter(e => Math.floor(e.x) === x && Math.floor(e.y) === y);
+        
+        // Get player position
+        const player = Array.from(this.entities.values())
+            .find(entity => entity.type === this.entityTypes.PLAYER);
+        
+        if (!player) return;
+        
+        // Calculate distance to interaction point
+        const dx = x - player.x;
+        const dy = y - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Check if within interaction range
+        if (distance <= this.interactionRange) {
+            // Check for prey interactions first
+            for (const entity of entities) {
+                if (entity.health !== null) {  // If entity has health, it's prey
+                    // Damage the prey
+                    entity.health -= this.harvestSettings.preyDamage;
+                    
+                    // If prey is killed
+                    if (entity.health <= 0) {
+                        // Add meat to inventory
+                        this.addToInventory(this.inventoryItems.MEAT);
+                        
+                        // Special drops for cows
+                        if (entity.type === this.entityTypes.COW) {
+                            // Chance to get hide from cows
+                            if (Math.random() < this.harvestSettings.hideChance) {
+                                this.addToInventory(this.inventoryItems.HIDE);
+                            }
+                        }
+                        
+                        // Chance to get bone
+                        if (Math.random() < this.harvestSettings.boneChance) {
+                            this.addToInventory(this.inventoryItems.BONE);
+                        }
+                        
+                        // Remove the dead prey
+                        this.removeEntity(entity.id);
+                    }
+                    return;  // Stop checking other interactions if we hit prey
+                }
+            }
+
+            // Tree interaction
+            if (tree) {
+                // Check if player has an axe
+                const hasAxe = this.hasToolInInventory('stone_axe');
+                
+                // Calculate wood drop chance with axe bonus
+                const woodChance = this.harvestSettings.woodChance + 
+                    (hasAxe ? this.harvestSettings.axeWoodBonus : 0);
+                
+                // Try to harvest wood from tree
+                if (Math.random() < woodChance) {
+                    // Add more wood if using axe
+                    const woodAmount = hasAxe ? this.harvestSettings.axeWoodAmount : 1;
+                    for (let i = 0; i < woodAmount; i++) {
+                        this.addToInventory(this.inventoryItems.WOOD);
+                    }
+                    
+                    // Calculate remove chance with axe bonus
+                    const removeChance = this.harvestSettings.removeChance +
+                        (hasAxe ? this.harvestSettings.axeRemoveBonus : 0);
+                    
+                    // Chance to remove the tree
+                    if (Math.random() < removeChance) {
+                        this.foliage.trees.delete(`${x},${y}`);
+                    }
+                }
+            }
+            // Rock interaction
+            if (rock) {
+                // Try to harvest rock shard
+                if (Math.random() < this.harvestSettings.rockChance) {
+                    this.addToInventory(this.inventoryItems.ROCK_SHARD);
+                    
+                    // Chance to remove the rock
+                    if (Math.random() < this.harvestSettings.removeChance) {
+                        this.foliage.rocks.delete(`${x},${y}`);
+                    }
+                }
+            }
+            if (grass) {
+                console.log('Interacting with grass');
+                // Add grass interaction logic here
+            }
+        }
+    }
+
+    canCraft(recipe) {
+        const ingredients = this.craftingRecipes[recipe].ingredients;
+        return Object.entries(ingredients).every(([item, required]) => {
+            const slot = this.inventory.find(slot => slot.item === item);
+            return slot && slot.count >= required;
+        });
+    }
+
+    craft(recipe) {
+        if (!this.canCraft(recipe)) return false;
+        
+        // Remove ingredients
+        const ingredients = this.craftingRecipes[recipe].ingredients;
+        Object.entries(ingredients).forEach(([item, required]) => {
+            for (let i = 0; i < required; i++) {
+                const slot = this.inventory.find(slot => slot.item === item);
+                if (slot) this.removeFromInventory(this.inventory.indexOf(slot));
+            }
+        });
+        
+        // Add crafted item
+        const result = this.craftingRecipes[recipe].result;
+        const count = this.craftingRecipes[recipe].count;
+        for (let i = 0; i < count; i++) {
+            this.addToInventory(result);
+        }
+        
+        return true;
+    }
+
+    handleDragStart(e, fromIndex) {
+        // Only start drag if slot has an item
+        if (this.inventory[fromIndex].item) {
+            e.dataTransfer.setData('text/plain', fromIndex);
+            e.target.style.opacity = '0.4';
+        } else {
+            e.preventDefault();
+        }
+    }
+
+    handleDragOver(e) {
+        e.preventDefault(); // Allow drop
+        e.dataTransfer.dropEffect = 'move';
+    }
+
+    handleDrop(e, toIndex) {
+        e.preventDefault();
+        const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+        
+        // Don't do anything if dropping on the same slot
+        if (fromIndex === toIndex) {
+            return;
+        }
+        
+        // Swap inventory slots
+        const temp = this.inventory[fromIndex];
+        this.inventory[fromIndex] = this.inventory[toIndex];
+        this.inventory[toIndex] = temp;
+        
+        // Reset opacity and update display
+        document.querySelectorAll('.inventory-slot').forEach(slot => {
+            slot.style.opacity = '1';
+        });
+        this.updateInventoryDisplay();
+    }
+
+    hasToolInInventory(toolName) {
+        return this.inventory.some(slot => slot.item === toolName);
     }
 } 

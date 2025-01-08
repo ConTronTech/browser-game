@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Isometric Game</title>
+    <link rel="icon" href="data:,">
     <style>
         canvas {
             border: 1px solid black;
@@ -42,6 +43,77 @@
         }
         #mobControls {
             right: 10px;
+        }
+        .inventory-slot {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+            user-select: none;
+        }
+        
+        .inventory-slot:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 5px rgba(0,0,0,0.2);
+        }
+        
+        .tooltip {
+            display: none;
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 1000;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        
+        .inventory-slot:hover .tooltip {
+            display: block;
+        }
+        
+        .inventory-slot[draggable="true"]:active {
+            cursor: grabbing;
+        }
+        
+        .inventory-slot[draggable="true"] {
+            cursor: grab;
+        }
+        
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        
+        .collapsible-content.expanded {
+            max-height: 1000px;  /* Large enough to fit content */
+        }
+        
+        .collapsible-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .collapsible-header:after {
+            content: '▼';
+            font-size: 12px;
+            transition: transform 0.3s;
+        }
+        
+        .collapsible-header.expanded:after {
+            transform: rotate(180deg);
         }
     </style>
 </head>

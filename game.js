@@ -5,7 +5,26 @@ class IsometricGame {
             water: this.loadTexture('assets/textures/water.png'),
             grass: this.loadTexture('assets/textures/grass.png'),
             sand: this.loadTexture('assets/textures/sand.png'),
-            darkGrass: this.loadTexture('assets/textures/dark_grass.png')
+            darkGrass: this.loadTexture('assets/textures/dark_grass.png'),
+            trees: [
+                this.loadTexture('assets/textures/foliage/trees/tree_1.png'),
+                this.loadTexture('assets/textures/foliage/trees/tree_2.png'),
+                this.loadTexture('assets/textures/foliage/trees/tree_3.png'),
+            ],
+            foliageGrass: [
+                this.loadTexture('assets/textures/foliage/grass/grass_1.png'),
+                this.loadTexture('assets/textures/foliage/grass/grass_2.png'),
+                this.loadTexture('assets/textures/foliage/grass/grass_3.png'),
+            ],
+            rocks: [
+                this.loadTexture('assets/textures/foliage/rocks/rock_1.png'),
+                this.loadTexture('assets/textures/foliage/rocks/rock_2.png'),
+                this.loadTexture('assets/textures/foliage/rocks/rock_3.png'),
+            ],
+            items: {
+                wood: this.loadTexture('assets/objects/items/wood.png'),
+                rock_shard: this.loadTexture('assets/objects/items/rock_shard.png')
+            }
         };
         
         this.canvas = document.getElementById('gameCanvas');
@@ -52,7 +71,8 @@ class IsometricGame {
             down: false,
             left: false,
             right: false,
-            sprint: false
+            sprint: false,
+            interact: false  // Add interact state
         };
         
         // Add debug state
@@ -68,13 +88,34 @@ class IsometricGame {
         this.init();
         
         this.setupTerrainControls();
-        this.setupDebugControls();
     }
     
     init() {
         this.setupControls();
         this.setupCameraControls();
         this.gameLoop();
+
+        // Add keyboard event listeners
+        document.addEventListener('keydown', (e) => {
+            switch(e.key.toLowerCase()) {
+                case 'w': this.movement.up = true; break;
+                case 's': this.movement.down = true; break;
+                case 'a': this.movement.left = true; break;
+                case 'd': this.movement.right = true; break;
+                case 'shift': this.movement.sprint = true; break;
+                case 'e': this.interact(); break;  // Add interact key
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch(e.key.toLowerCase()) {
+                case 'w': this.movement.up = false; break;
+                case 's': this.movement.down = false; break;
+                case 'a': this.movement.left = false; break;
+                case 'd': this.movement.right = false; break;
+                case 'shift': this.movement.sprint = false; break;
+            }
+        });
     }
     
     setupCameraControls() {
@@ -410,6 +451,52 @@ class IsometricGame {
                 this.ctx.lineWidth = 1;
             }
         }
+
+        // Draw grass if present (before rocks and trees)
+        const grass = this.gameAPI.getGrass(x, y);
+        if (grass) {
+            const grassTexture = this.textures.foliageGrass[grass.type];
+            if (grassTexture) {
+                this.ctx.drawImage(
+                    grassTexture,
+                    iso.x - this.tileWidth/2,
+                    iso.y - this.tileHeight/2,
+                    this.tileWidth,
+                    this.tileHeight
+                );
+            }
+        }
+
+        // Draw rock if present (after grass, before trees)
+        const rock = this.gameAPI.getRock(x, y);
+        if (rock) {
+            const rockTexture = this.textures.rocks[rock.type];
+            if (rockTexture) {
+                this.ctx.drawImage(
+                    rockTexture,
+                    iso.x - this.tileWidth/2,
+                    iso.y - this.tileHeight/2,
+                    this.tileWidth,
+                    this.tileHeight
+                );
+            }
+        }
+
+        // Draw tree if present (after grass and rocks)
+        const tree = this.gameAPI.getTree(x, y);
+        if (tree) {
+            const treeTexture = this.textures.trees[tree.type];
+            if (treeTexture) {
+                // Draw tree centered on tile, slightly elevated
+                this.ctx.drawImage(
+                    treeTexture,
+                    iso.x - this.tileWidth/2,
+                    iso.y - this.tileHeight - this.tileHeight/2,  // Elevated position
+                    this.tileWidth,
+                    this.tileHeight * 2  // Trees are twice as tall as tiles
+                );
+            }
+        }
     }
     
     drawEntities() {
@@ -695,10 +782,21 @@ class IsometricGame {
 
         // Add section headers
         const terrainHeader = document.createElement('div');
+        terrainHeader.className = 'collapsible-header';
         terrainHeader.style.fontWeight = 'bold';
-        terrainHeader.style.marginBottom = '10px';
+        terrainHeader.style.padding = '10px 0';
         terrainHeader.textContent = 'Terrain Settings';
         controls.appendChild(terrainHeader);
+
+        const terrainContent = document.createElement('div');
+        terrainContent.className = 'collapsible-content';
+        controls.appendChild(terrainContent);
+        
+        // Toggle expansion when header is clicked
+        terrainHeader.onclick = () => {
+            terrainHeader.classList.toggle('expanded');
+            terrainContent.classList.toggle('expanded');
+        };
 
         // Add map size selector
         const mapSizeContainer = document.createElement('div');
@@ -736,7 +834,7 @@ class IsometricGame {
         };
         
         mapSizeContainer.appendChild(mapSizeSelect);
-        controls.appendChild(mapSizeContainer);
+        terrainContent.appendChild(mapSizeContainer);
 
         const settings = this.gameAPI.terrainSettings;
         const inputs = {
@@ -757,7 +855,7 @@ class IsometricGame {
                     )
                 );
             };
-            controls.appendChild(input.parentElement);
+            terrainContent.appendChild(input.parentElement);
         });
 
         const regenerateButton = document.createElement('button');
@@ -772,8 +870,10 @@ class IsometricGame {
                 )
             });
         };
-        controls.appendChild(regenerateButton);
+        terrainContent.appendChild(regenerateButton);
 
+        document.body.appendChild(controls);
+        
         // Add Debug Settings section
         const debugHeader = document.createElement('div');
         debugHeader.style.fontWeight = 'bold';
@@ -796,8 +896,6 @@ class IsometricGame {
             });
             controls.appendChild(checkbox.parentElement);
         });
-
-        document.body.appendChild(controls);
         
         // Setup separate mob controls
         this.setupMobControls();
@@ -808,12 +906,37 @@ class IsometricGame {
         mobControls.className = 'controls';
         mobControls.id = 'mobControls';
 
+        // Create separate inventory card
+        const inventoryCard = document.createElement('div');
+        inventoryCard.className = 'controls';
+        inventoryCard.style.right = '10px';
+        document.body.appendChild(inventoryCard);
+        
+        // Function to update inventory position
+        const updateInventoryPosition = () => {
+            const mobControlsRect = mobControls.getBoundingClientRect();
+            inventoryCard.style.top = `${mobControlsRect.height + 20}px`;  // 20px gap
+        };
+
         // Add mob settings header
         const mobHeader = document.createElement('div');
+        mobHeader.className = 'collapsible-header';
         mobHeader.style.fontWeight = 'bold';
-        mobHeader.style.marginBottom = '10px';
+        mobHeader.style.padding = '10px 0';
         mobHeader.textContent = 'Mob Settings';
         mobControls.appendChild(mobHeader);
+
+        const mobContent = document.createElement('div');
+        mobContent.className = 'collapsible-content';
+        mobControls.appendChild(mobContent);
+        
+        // Toggle expansion when header is clicked
+        mobHeader.onclick = () => {
+            mobHeader.classList.toggle('expanded');
+            mobContent.classList.toggle('expanded');
+            // Update inventory position after animation completes
+            setTimeout(updateInventoryPosition, 300);  // 300ms matches transition duration
+        };
 
         // Create sections for different mob types
         const sections = {
@@ -848,17 +971,27 @@ class IsometricGame {
             Object.entries(controls).forEach(([key, input]) => {
                 input.oninput = (e) => {
                     const newValue = parseFloat(e.target.value);
-                    // Update both the game settings and the display
                     this.gameAPI.entitySettings[key] = parseFloat(input.value);
                     input.valueDisplay.textContent = newValue;
                 };
                 section.appendChild(input.parentElement);
             });
 
-            mobControls.appendChild(section);
+            mobContent.appendChild(section);
         }
 
         document.body.appendChild(mobControls);
+        
+        // Initial position update
+        requestAnimationFrame(updateInventoryPosition);
+        
+        const inventoryHeader = document.createElement('div');
+        inventoryHeader.style.fontWeight = 'bold';
+        inventoryHeader.style.marginBottom = '10px';
+        inventoryHeader.textContent = 'Inventory';
+        inventoryCard.appendChild(inventoryHeader);
+        
+        inventoryCard.appendChild(this.createInventorySection());
     }
 
     createSlider(label, min, max, value, step) {
@@ -925,6 +1058,129 @@ class IsometricGame {
         this.ctx.lineTo(x, y + r);
         this.ctx.quadraticCurveTo(x, y, x + r, y);
         this.ctx.closePath();
+    }
+
+    createInventorySection() {
+        const container = document.createElement('div');
+        container.style.width = '275px';  // Match width of other menus
+        
+        // Create inventory display
+        const inventoryDisplay = document.createElement('div');
+        inventoryDisplay.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
+        inventoryDisplay.style.padding = '5px';
+        inventoryDisplay.style.borderRadius = '3px';
+        inventoryDisplay.style.marginBottom = '10px';
+        
+        // Add inventory slots
+        const slots = document.createElement('div');
+        slots.style.display = 'grid';
+        slots.style.gridTemplateColumns = 'repeat(4, 1fr)';
+        slots.style.gridTemplateRows = 'repeat(3, 1fr)';
+        slots.style.gap = '5px';
+        slots.style.justifyItems = 'center';
+        
+        // Create 12 inventory slots
+        for (let i = 0; i < 12; i++) {
+            const slot = document.createElement('div');
+            slot.className = 'inventory-slot';
+            slot.style.width = '30px';
+            slot.style.height = '30px';
+            slot.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+            slot.style.border = '1px solid #666';
+            slot.style.borderRadius = '3px';
+            slots.appendChild(slot);
+        }
+        
+        inventoryDisplay.appendChild(slots);
+        container.appendChild(inventoryDisplay);
+        
+        // Add crafting section
+        const craftingSection = document.createElement('div');
+        craftingSection.style.marginTop = '20px';
+        
+        const craftingHeader = document.createElement('div');
+        craftingHeader.style.fontWeight = 'bold';
+        craftingHeader.style.marginBottom = '10px';
+        craftingHeader.textContent = 'Crafting';
+        craftingSection.appendChild(craftingHeader);
+        
+        // Create crafting grid
+        const craftingGrid = document.createElement('div');
+        craftingGrid.style.display = 'grid';
+        craftingGrid.style.gridTemplateColumns = 'repeat(2, 1fr)';
+        craftingGrid.style.gap = '5px';
+        craftingGrid.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
+        craftingGrid.style.padding = '5px';
+        craftingGrid.style.borderRadius = '3px';
+        
+        // Add recipe buttons
+        Object.entries(this.gameAPI.craftingRecipes).forEach(([recipe, data]) => {
+            const recipeButton = document.createElement('button');
+            recipeButton.style.padding = '5px';
+            recipeButton.style.display = 'flex';
+            recipeButton.style.flexDirection = 'column';
+            recipeButton.style.alignItems = 'center';
+            recipeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+            recipeButton.style.border = '1px solid #666';
+            recipeButton.style.borderRadius = '3px';
+            recipeButton.style.cursor = 'pointer';
+            
+            // Recipe name
+            const name = document.createElement('div');
+            name.textContent = this.gameAPI.formatItemName(recipe);
+            name.style.marginBottom = '3px';
+            recipeButton.appendChild(name);
+            
+            // Recipe ingredients
+            const ingredients = document.createElement('div');
+            ingredients.style.fontSize = '10px';
+            ingredients.style.color = '#666';
+            ingredients.textContent = Object.entries(data.ingredients)
+                .map(([item, count]) => `${count}x ${this.gameAPI.formatItemName(item)}`)
+                .join(', ');
+            recipeButton.appendChild(ingredients);
+            
+            // Click handler
+            recipeButton.onclick = () => {
+                if (this.gameAPI.craft(recipe)) {
+                    // Visual feedback for successful craft
+                    recipeButton.style.backgroundColor = '#90EE90';
+                    setTimeout(() => {
+                        recipeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+                    }, 200);
+                } else {
+                    // Visual feedback for failed craft
+                    recipeButton.style.backgroundColor = '#FFB6C1';
+                    setTimeout(() => {
+                        recipeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+                    }, 200);
+                }
+            };
+            
+            craftingGrid.appendChild(recipeButton);
+        });
+        
+        craftingSection.appendChild(craftingGrid);
+        container.appendChild(craftingSection);
+        
+        return container;
+    }
+
+    interact() {
+        // Get player's current position
+        const playerX = Math.floor(this.player.x);
+        const playerY = Math.floor(this.player.y);
+        
+        // Check adjacent tiles (including diagonal)
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const checkX = playerX + dx;
+                const checkY = playerY + dy;
+                
+                // Try to interact with anything at this position
+                this.gameAPI.tryInteract(checkX, checkY);
+            }
+        }
     }
 }
 
